@@ -125,57 +125,64 @@ class ClothTypeClassifier:
 
     @staticmethod
     def load_model(load_path):
-        import sys
         import numpy as np
-        from sklearn.tree._tree import TREE_LEAF, TREE_UNDEFINED
+        from sklearn import __version__ as sklearn_version
         
-        class CustomUnpickler(pickle.Unpickler):
-            def find_class(self, module, name):
-                try:
-                    return super().find_class(module, name)
-                except AttributeError:
-                    if 'sklearn' in module:
-                        import sklearn.tree._tree as tree_module
-                        if hasattr(tree_module, name):
-                            return getattr(tree_module, name)
-                    raise
-        
-        def patch_tree_node(tree):
-            if hasattr(tree, 'feature') and hasattr(tree, 'left_child'):
-                n_nodes = len(tree.feature)
-                if not hasattr(tree, 'missing_go_to_left'):
+        def aggressive_tree_patch(tree):
+            try:
+                if hasattr(tree, 'feature'):
+                    n_nodes = len(tree.feature)
+                    
+                    if hasattr(tree, 'missing_go_to_left'):
+                        return tree
+                    
                     tree.missing_go_to_left = np.zeros(n_nodes, dtype=np.uint8)
+                    
+                    if not hasattr(tree, '_is_leaf'):
+                        tree._is_leaf = np.zeros(n_nodes, dtype=bool)
+                        for i in range(n_nodes):
+                            if tree.feature[i] == -2:
+                                tree._is_leaf[i] = True
+            except Exception:
+                pass
             return tree
         
-        def patch_model(model):
+        def patch_estimator(est):
             try:
-                if hasattr(model, 'estimators_'):
-                    for estimator in model.estimators_:
-                        if hasattr(estimator, 'tree_'):
-                            patch_tree_node(estimator.tree_)
-                if hasattr(model, 'tree_'):
-                    patch_tree_node(model.tree_)
-            except:
+                if hasattr(est, 'tree_'):
+                    aggressive_tree_patch(est.tree_)
+                if hasattr(est, 'estimators_'):
+                    for e in est.estimators_:
+                        if hasattr(e, 'tree_'):
+                            aggressive_tree_patch(e.tree_)
+            except Exception:
                 pass
-            return model
+            return est
         
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore')
             try:
                 with open(load_path, 'rb') as f:
                     model_data = pickle.load(f)
-            except (ValueError, TypeError, AttributeError) as e:
-                try:
+            except (ValueError, TypeError) as e:
+                if "incompatible dtype" in str(e) or "missing_go_to_left" in str(e):
+                    import io
+                    import sys
+                    
                     with open(load_path, 'rb') as f:
-                        model_data = CustomUnpickler(f).load()
-                except:
-                    with open(load_path, 'rb') as f:
-                        import sys
-                        sys.modules['sklearn.tree._tree'] = __import__('sklearn.tree._tree', fromlist=[''])
-                        model_data = pickle.load(f, encoding='latin1')
+                        try:
+                            model_data = pickle.load(f, encoding='bytes')
+                        except:
+                            f.seek(0)
+                            model_data = pickle.load(f, encoding='latin1')
+                else:
+                    raise
         
         if 'model' in model_data:
-            model_data['model'] = patch_model(model_data['model'])
+            try:
+                model_data['model'] = patch_estimator(model_data['model'])
+            except Exception:
+                pass
         
         classifier = ClothTypeClassifier(classifier_type=model_data['classifier_type'])
         classifier.model = model_data['model']

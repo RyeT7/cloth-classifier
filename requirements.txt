@@ -1,5 +1,5 @@
 streamlit
-numpy>=1.26
+numpy=1.17
 opencv-python-headless>=4.9.0
 scikit-learn>=1.4
 matplotlib>=3.8

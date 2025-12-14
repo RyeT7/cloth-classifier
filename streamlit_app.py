@@ -125,11 +125,42 @@ class ClothTypeClassifier:
 
     @staticmethod
     def load_model(load_path):
-        import warnings
-        with warnings.catch_warnings():
-            warnings.filterwarnings('ignore')
-            with open(load_path, 'rb') as f:
-                model_data = pickle.load(f)
+        import sys
+        import numpy as np
+        from numpy.lib import NumpyVersion
+        
+        class SklearnPickler:
+            """Custom unpickler to handle sklearn version compatibility issues"""
+            def __init__(self, file_obj):
+                self.file_obj = file_obj
+                self.unpickler = pickle.Unpickler(file_obj)
+            
+            def load(self):
+                try:
+                    return self.unpickler.load()
+                except (ValueError, TypeError) as e:
+                    self.file_obj.seek(0)
+                    return pickle.Unpickler(self.file_obj).load()
+        
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore')
+                with open(load_path, 'rb') as f:
+                    model_data = pickle.load(f)
+        except (ValueError, TypeError) as e:
+            if "incompatible dtype" in str(e):
+                import joblib
+                try:
+                    model_data = joblib.load(load_path)
+                except:
+                    st.warning(f"⚠️ Model loading issue detected. Attempting alternative load method...")
+                    with open(load_path, 'rb') as f:
+                        import pickletools
+                        import io
+                        f.seek(0)
+                        model_data = pickle.load(f, encoding='latin1')
+            else:
+                raise e
         
         classifier = ClothTypeClassifier(classifier_type=model_data['classifier_type'])
         classifier.model = model_data['model']
@@ -201,9 +232,9 @@ def find_available_models():
 available_models = find_available_models()
 
 if not available_models:
-    st.error("❌ No trained models found! Please train models first using the notebook.")
-    st.info("**Model Compatibility Issue Detected:**\n\nYour saved models appear to be incompatible with the current scikit-learn version. This happens when models are trained with an older version of scikit-learn.\n\n**Solution:** Please retrain your models using the main.ipynb notebook:\n1. Open main.ipynb\n2. Run all cells to retrain the models\n3. This will create new model files compatible with your current environment\n4. Then refresh this app")
-    st.stop()
+    st.error("No trained models found! Please train models first using the notebook.")
+    st.info("Make sure you have saved models as 'cloth_classifier_rf_*.pkl' or 'cloth_classifier_svm_*.pkl'")
+else:
     col1, col2 = st.columns([2, 1])
     
     with col1:

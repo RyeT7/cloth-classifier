@@ -4,3 +4,4 @@ opencv-python-headless>=4.9.0
 scikit-learn>=1.4
 matplotlib>=3.8
 pillow>=10
+joblib

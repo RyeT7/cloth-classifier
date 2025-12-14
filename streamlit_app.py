@@ -243,7 +243,6 @@ st.set_page_config(page_title="Cloth Classifier", layout="wide")
 st.title("👗 Cloth Type Classifier")
 st.write("Upload a cloth image and the model will classify it for you!")
 
-@st.cache_resource
 def find_available_models():
     models = {}
     current_dir = os.path.dirname(os.path.abspath(__file__))

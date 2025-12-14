@@ -125,65 +125,34 @@ class ClothTypeClassifier:
 
     @staticmethod
     def load_model(load_path):
-        import numpy as np
-        from sklearn import __version__ as sklearn_version
+        import joblib
         
-        def aggressive_tree_patch(tree):
-            try:
-                if hasattr(tree, 'feature'):
-                    n_nodes = len(tree.feature)
-                    
-                    if hasattr(tree, 'missing_go_to_left'):
-                        return tree
-                    
-                    tree.missing_go_to_left = np.zeros(n_nodes, dtype=np.uint8)
-                    
-                    if not hasattr(tree, '_is_leaf'):
-                        tree._is_leaf = np.zeros(n_nodes, dtype=bool)
-                        for i in range(n_nodes):
-                            if tree.feature[i] == -2:
-                                tree._is_leaf[i] = True
-            except Exception:
-                pass
-            return tree
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore')
+                model_data = joblib.load(load_path)
+                return ClothTypeClassifier._create_classifier(model_data)
+        except Exception as e:
+            st.warning(f"Joblib load failed: {str(e)}")
         
-        def patch_estimator(est):
-            try:
-                if hasattr(est, 'tree_'):
-                    aggressive_tree_patch(est.tree_)
-                if hasattr(est, 'estimators_'):
-                    for e in est.estimators_:
-                        if hasattr(e, 'tree_'):
-                            aggressive_tree_patch(e.tree_)
-            except Exception:
-                pass
-            return est
+        try:
+            with open(load_path, 'rb') as f:
+                model_data = pickle.load(f)
+                return ClothTypeClassifier._create_classifier(model_data)
+        except Exception as e:
+            st.warning(f"Pickle load failed: {str(e)}")
         
-        with warnings.catch_warnings():
-            warnings.filterwarnings('ignore')
-            try:
-                with open(load_path, 'rb') as f:
-                    model_data = pickle.load(f)
-            except (ValueError, TypeError) as e:
-                if "incompatible dtype" in str(e) or "missing_go_to_left" in str(e):
-                    import io
-                    import sys
-                    
-                    with open(load_path, 'rb') as f:
-                        try:
-                            model_data = pickle.load(f, encoding='bytes')
-                        except:
-                            f.seek(0)
-                            model_data = pickle.load(f, encoding='latin1')
-                else:
-                    raise
+        try:
+            with open(load_path, 'rb') as f:
+                model_data = pickle.load(f, encoding='latin1')
+                return ClothTypeClassifier._create_classifier(model_data)
+        except Exception as e:
+            st.warning(f"Latin1 load failed: {str(e)}")
         
-        if 'model' in model_data:
-            try:
-                model_data['model'] = patch_estimator(model_data['model'])
-            except Exception:
-                pass
-        
+        raise ValueError(f"Could not load model {load_path}")
+    
+    @staticmethod
+    def _create_classifier(model_data):
         classifier = ClothTypeClassifier(classifier_type=model_data['classifier_type'])
         classifier.model = model_data['model']
         classifier.scaler = model_data['scaler']
@@ -242,14 +211,12 @@ def find_available_models():
         if file.startswith('cloth_classifier_') and file.endswith('.pkl'):
             file_path = os.path.join(current_dir, file)
             try:
-                with warnings.catch_warnings():
-                    warnings.filterwarnings('ignore')
-                    classifier = ClothTypeClassifier.load_model(file_path)
-                    model_type = 'Random Forest' if 'rf' in file else 'SVM'
-                    feature_type = classifier.feature_type
-                    models[f"{model_type} ({feature_type})"] = file_path
+                classifier = ClothTypeClassifier.load_model(file_path)
+                model_type = 'Random Forest' if 'rf' in file else 'SVM'
+                feature_type = classifier.feature_type
+                models[f"{model_type} ({feature_type})"] = file_path
             except Exception as e:
-                pass
+                st.error(f"Failed to load {file}: {str(e)}")
     
     return models
 

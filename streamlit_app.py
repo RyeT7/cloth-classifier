@@ -125,27 +125,72 @@ class ClothTypeClassifier:
 
     @staticmethod
     def load_model(load_path):
-        import joblib
+        import numpy as np
+        
+        def fix_tree_structure(tree):
+            """Reconstruct tree node array with missing_go_to_left field"""
+            try:
+                if not hasattr(tree, 'nodes'):
+                    return tree
+                
+                nodes = tree.nodes
+                if nodes.dtype.names and 'missing_go_to_left' not in nodes.dtype.names:
+                    st.info(f"Fixing tree structure - adding missing_go_to_left field")
+                    
+                    n_nodes = len(nodes)
+                    new_dtype = np.dtype([
+                        ('left_child', '<i8'),
+                        ('right_child', '<i8'),
+                        ('feature', '<i8'),
+                        ('threshold', '<f8'),
+                        ('impurity', '<f8'),
+                        ('n_node_samples', '<i8'),
+                        ('weighted_n_node_samples', '<f8'),
+                        ('missing_go_to_left', 'u1')
+                    ])
+                    
+                    new_nodes = np.zeros(n_nodes, dtype=new_dtype)
+                    for field in ['left_child', 'right_child', 'feature', 'threshold', 'impurity', 'n_node_samples', 'weighted_n_node_samples']:
+                        if field in nodes.dtype.names:
+                            new_nodes[field] = nodes[field]
+                    new_nodes['missing_go_to_left'] = 0
+                    
+                    tree.nodes = new_nodes
+            except Exception as e:
+                st.warning(f"Could not fix tree structure: {e}")
+            
+            return tree
+        
+        def fix_forest(model):
+            """Fix all trees in a forest"""
+            try:
+                if hasattr(model, 'estimators_'):
+                    for estimator in model.estimators_:
+                        if hasattr(estimator, 'tree_'):
+                            fix_tree_structure(estimator.tree_)
+            except Exception as e:
+                st.warning(f"Could not fix forest: {e}")
+            return model
         
         try:
             with warnings.catch_warnings():
                 warnings.filterwarnings('ignore')
-                model_data = joblib.load(load_path)
-                return ClothTypeClassifier._create_classifier(model_data)
+                with open(load_path, 'rb') as f:
+                    model_data = pickle.load(f)
+                    if 'model' in model_data:
+                        model_data['model'] = fix_forest(model_data['model'])
+                    return ClothTypeClassifier._create_classifier(model_data)
         except Exception as e:
-            st.warning(f"Joblib load failed: {str(e)}")
+            st.warning(f"Standard load failed: {str(e)}")
         
         try:
-            with open(load_path, 'rb') as f:
-                model_data = pickle.load(f)
-                return ClothTypeClassifier._create_classifier(model_data)
-        except Exception as e:
-            st.warning(f"Pickle load failed: {str(e)}")
-        
-        try:
-            with open(load_path, 'rb') as f:
-                model_data = pickle.load(f, encoding='latin1')
-                return ClothTypeClassifier._create_classifier(model_data)
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore')
+                with open(load_path, 'rb') as f:
+                    model_data = pickle.load(f, encoding='latin1')
+                    if 'model' in model_data:
+                        model_data['model'] = fix_forest(model_data['model'])
+                    return ClothTypeClassifier._create_classifier(model_data)
         except Exception as e:
             st.warning(f"Latin1 load failed: {str(e)}")
         

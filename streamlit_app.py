@@ -126,32 +126,56 @@ class ClothTypeClassifier:
     @staticmethod
     def load_model(load_path):
         import sys
-        from sklearn.tree import _tree
+        import numpy as np
+        from sklearn.tree._tree import TREE_LEAF, TREE_UNDEFINED
         
-        def fix_sklearn_model(model_data):
-            if 'model' in model_data:
-                model = model_data['model']
+        class CustomUnpickler(pickle.Unpickler):
+            def find_class(self, module, name):
+                try:
+                    return super().find_class(module, name)
+                except AttributeError:
+                    if 'sklearn' in module:
+                        import sklearn.tree._tree as tree_module
+                        if hasattr(tree_module, name):
+                            return getattr(tree_module, name)
+                    raise
+        
+        def patch_tree_node(tree):
+            if hasattr(tree, 'feature') and hasattr(tree, 'left_child'):
+                n_nodes = len(tree.feature)
+                if not hasattr(tree, 'missing_go_to_left'):
+                    tree.missing_go_to_left = np.zeros(n_nodes, dtype=np.uint8)
+            return tree
+        
+        def patch_model(model):
+            try:
                 if hasattr(model, 'estimators_'):
                     for estimator in model.estimators_:
                         if hasattr(estimator, 'tree_'):
-                            tree = estimator.tree_
-                            if hasattr(tree, 'feature'):
-                                if not hasattr(tree, 'missing_go_to_left'):
-                                    tree.missing_go_to_left = np.zeros(len(tree.feature), dtype=bool)
-            return model_data
+                            patch_tree_node(estimator.tree_)
+                if hasattr(model, 'tree_'):
+                    patch_tree_node(model.tree_)
+            except:
+                pass
+            return model
         
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore')
             try:
                 with open(load_path, 'rb') as f:
                     model_data = pickle.load(f)
-            except (ValueError, TypeError) as e:
-                if "incompatible dtype" in str(e):
+            except (ValueError, TypeError, AttributeError) as e:
+                try:
                     with open(load_path, 'rb') as f:
+                        model_data = CustomUnpickler(f).load()
+                except:
+                    with open(load_path, 'rb') as f:
+                        import sys
+                        sys.modules['sklearn.tree._tree'] = __import__('sklearn.tree._tree', fromlist=[''])
                         model_data = pickle.load(f, encoding='latin1')
-                    model_data = fix_sklearn_model(model_data)
-                else:
-                    raise e
+        
+        if 'model' in model_data:
+            model_data['model'] = patch_model(model_data['model'])
         
         classifier = ClothTypeClassifier(classifier_type=model_data['classifier_type'])
         classifier.model = model_data['model']

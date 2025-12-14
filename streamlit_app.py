@@ -126,73 +126,69 @@ class ClothTypeClassifier:
     @staticmethod
     def load_model(load_path):
         import numpy as np
+        from io import BytesIO
         
-        def fix_tree_structure(tree):
-            """Reconstruct tree node array with missing_go_to_left field"""
-            try:
-                if not hasattr(tree, 'nodes'):
-                    return tree
+        class TreeFixingUnpickler(pickle.Unpickler):
+            def load_build(self):
+                stack = self.stack
+                state = stack.pop()
+                inst = stack[-1]
                 
-                nodes = tree.nodes
-                if nodes.dtype.names and 'missing_go_to_left' not in nodes.dtype.names:
-                    st.info(f"Fixing tree structure - adding missing_go_to_left field")
-                    
-                    n_nodes = len(nodes)
-                    new_dtype = np.dtype([
-                        ('left_child', '<i8'),
-                        ('right_child', '<i8'),
-                        ('feature', '<i8'),
-                        ('threshold', '<f8'),
-                        ('impurity', '<f8'),
-                        ('n_node_samples', '<i8'),
-                        ('weighted_n_node_samples', '<f8'),
-                        ('missing_go_to_left', 'u1')
-                    ])
-                    
-                    new_nodes = np.zeros(n_nodes, dtype=new_dtype)
-                    for field in ['left_child', 'right_child', 'feature', 'threshold', 'impurity', 'n_node_samples', 'weighted_n_node_samples']:
-                        if field in nodes.dtype.names:
-                            new_nodes[field] = nodes[field]
-                    new_nodes['missing_go_to_left'] = 0
-                    
-                    tree.nodes = new_nodes
-            except Exception as e:
-                st.warning(f"Could not fix tree structure: {e}")
-            
-            return tree
+                setstate = getattr(inst.__class__, "__setstate__", None)
+                if setstate is not None:
+                    setstate(inst, state)
+                    return
+                
+                slotstate = None
+                if isinstance(state, tuple) and len(state) == 2:
+                    state, slotstate = state
+                
+                if state:
+                    inst_dict = inst.__dict__
+                    inst_dict.update(state)
+                
+                if slotstate is not None:
+                    for k, v in slotstate.items():
+                        if k == 'nodes' and hasattr(v, 'dtype'):
+                            try:
+                                if 'missing_go_to_left' not in v.dtype.names:
+                                    st.info("Reconstructing tree node array...")
+                                    new_dtype = np.dtype([
+                                        ('left_child', '<i8'),
+                                        ('right_child', '<i8'),
+                                        ('feature', '<i8'),
+                                        ('threshold', '<f8'),
+                                        ('impurity', '<f8'),
+                                        ('n_node_samples', '<i8'),
+                                        ('weighted_n_node_samples', '<f8'),
+                                        ('missing_go_to_left', 'u1')
+                                    ])
+                                    new_nodes = np.zeros(len(v), dtype=new_dtype)
+                                    for name in v.dtype.names:
+                                        new_nodes[name] = v[name]
+                                    v = new_nodes
+                            except Exception as e:
+                                st.warning(f"Tree reconstruction failed: {e}")
+                        setattr(inst, k, v)
         
-        def fix_forest(model):
-            """Fix all trees in a forest"""
-            try:
-                if hasattr(model, 'estimators_'):
-                    for estimator in model.estimators_:
-                        if hasattr(estimator, 'tree_'):
-                            fix_tree_structure(estimator.tree_)
-            except Exception as e:
-                st.warning(f"Could not fix forest: {e}")
-            return model
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore')
+                with open(load_path, 'rb') as f:
+                    unpickler = TreeFixingUnpickler(f)
+                    model_data = unpickler.load()
+                    return ClothTypeClassifier._create_classifier(model_data)
+        except Exception as e:
+            st.warning(f"TreeFixingUnpickler failed: {str(e)}")
         
         try:
             with warnings.catch_warnings():
                 warnings.filterwarnings('ignore')
                 with open(load_path, 'rb') as f:
                     model_data = pickle.load(f)
-                    if 'model' in model_data:
-                        model_data['model'] = fix_forest(model_data['model'])
                     return ClothTypeClassifier._create_classifier(model_data)
         except Exception as e:
-            st.warning(f"Standard load failed: {str(e)}")
-        
-        try:
-            with warnings.catch_warnings():
-                warnings.filterwarnings('ignore')
-                with open(load_path, 'rb') as f:
-                    model_data = pickle.load(f, encoding='latin1')
-                    if 'model' in model_data:
-                        model_data['model'] = fix_forest(model_data['model'])
-                    return ClothTypeClassifier._create_classifier(model_data)
-        except Exception as e:
-            st.warning(f"Latin1 load failed: {str(e)}")
+            st.warning(f"Standard pickle failed: {str(e)}")
         
         raise ValueError(f"Could not load model {load_path}")
     

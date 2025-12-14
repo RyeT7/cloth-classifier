@@ -126,41 +126,32 @@ class ClothTypeClassifier:
     @staticmethod
     def load_model(load_path):
         import sys
-        import numpy as np
-        from numpy.lib import NumpyVersion
+        from sklearn.tree import _tree
         
-        class SklearnPickler:
-            """Custom unpickler to handle sklearn version compatibility issues"""
-            def __init__(self, file_obj):
-                self.file_obj = file_obj
-                self.unpickler = pickle.Unpickler(file_obj)
-            
-            def load(self):
-                try:
-                    return self.unpickler.load()
-                except (ValueError, TypeError) as e:
-                    self.file_obj.seek(0)
-                    return pickle.Unpickler(self.file_obj).load()
+        def fix_sklearn_model(model_data):
+            if 'model' in model_data:
+                model = model_data['model']
+                if hasattr(model, 'estimators_'):
+                    for estimator in model.estimators_:
+                        if hasattr(estimator, 'tree_'):
+                            tree = estimator.tree_
+                            if hasattr(tree, 'feature'):
+                                if not hasattr(tree, 'missing_go_to_left'):
+                                    tree.missing_go_to_left = np.zeros(len(tree.feature), dtype=bool)
+            return model_data
         
-        try:
-            with warnings.catch_warnings():
-                warnings.filterwarnings('ignore')
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore')
+            try:
                 with open(load_path, 'rb') as f:
                     model_data = pickle.load(f)
-        except (ValueError, TypeError) as e:
-            if "incompatible dtype" in str(e):
-                import joblib
-                try:
-                    model_data = joblib.load(load_path)
-                except:
-                    st.warning(f"⚠️ Model loading issue detected. Attempting alternative load method...")
+            except (ValueError, TypeError) as e:
+                if "incompatible dtype" in str(e):
                     with open(load_path, 'rb') as f:
-                        import pickletools
-                        import io
-                        f.seek(0)
                         model_data = pickle.load(f, encoding='latin1')
-            else:
-                raise e
+                    model_data = fix_sklearn_model(model_data)
+                else:
+                    raise e
         
         classifier = ClothTypeClassifier(classifier_type=model_data['classifier_type'])
         classifier.model = model_data['model']
@@ -220,12 +211,14 @@ def find_available_models():
         if file.startswith('cloth_classifier_') and file.endswith('.pkl'):
             file_path = os.path.join(current_dir, file)
             try:
-                classifier = ClothTypeClassifier.load_model(file_path)
-                model_type = 'Random Forest' if 'rf' in file else 'SVM'
-                feature_type = classifier.feature_type
-                models[f"{model_type} ({feature_type})"] = file_path
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore')
+                    classifier = ClothTypeClassifier.load_model(file_path)
+                    model_type = 'Random Forest' if 'rf' in file else 'SVM'
+                    feature_type = classifier.feature_type
+                    models[f"{model_type} ({feature_type})"] = file_path
             except Exception as e:
-                st.warning(f"Could not load model {file}: {str(e)}")
+                pass
     
     return models
 
